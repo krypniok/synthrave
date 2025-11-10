@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "synthrave/sequence.h"
+#include "synthrave/midi_loader.h"
 #include "synthrave/scheduler.h"
 
 static bool parse_float(const char *s, float *out) {
@@ -61,6 +62,7 @@ int main(int argc, char **argv) {
     };
     float gain = 0.3f;
     const char *seq_file = NULL;
+    const char *mid_file = NULL;
     const char *espeak_bin = "espeak";
 
     int idx = 1;
@@ -110,6 +112,11 @@ int main(int argc, char **argv) {
             idx += 2;
             continue;
         }
+        if (strcmp(argv[idx], "-m") == 0 && idx + 1 < argc) {
+            mid_file = argv[idx + 1];
+            idx += 2;
+            continue;
+        }
         if (strcmp(argv[idx], "-espeak") == 0 && idx + 1 < argc) {
             espeak_bin = argv[idx + 1];
             idx += 2;
@@ -124,7 +131,9 @@ int main(int argc, char **argv) {
 
     SequenceDocument doc = {0};
     bool ok = false;
-    if (seq_file) {
+    if (mid_file) {
+        ok = sequence_load_midi(mid_file, &opts, &doc);
+    } else if (seq_file) {
         ok = sequence_load_file(seq_file, &opts, &doc);
     } else if (idx < argc) {
         ok = sequence_build_from_tokens((const char *const *)(argv + idx),

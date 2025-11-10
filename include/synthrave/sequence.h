@@ -59,6 +59,8 @@ typedef struct {
     SeqSpec left;
     SeqSpec right;
     bool stereo;
+    float pan; /* -1 left, +1 right */
+    float gain;
     int duration_ms;
     int gap_ms;
     bool explicit_duration;

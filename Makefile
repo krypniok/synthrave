@@ -18,7 +18,7 @@ REPO_NAME ?= synthrave
 VISIBILITY ?= public
 COMMIT_MSG ?= chore: auto push
 
-.PHONY: all run clean push repo
+.PHONY: all run clean push repo mid2sr
 
 all: $(BINARY)
 
@@ -55,3 +55,6 @@ repo:
 		exit 1; \
 	fi
 	gh repo create $(REPO_NAME) --source=. --remote=$(REMOTE) --push --$(VISIBILITY)
+
+mid2sr:
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o tools/mid2sr tools/mid2sr.c -lm

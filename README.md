@@ -32,6 +32,7 @@ parallel; die Sequenz dauert ca. 8 Sekunden.
 ./build/synthrave 440:500 0:250 660:500     # Ad-hoc Tokens
 ./build/synthrave C4:1000                   # Noten-Syntax
 ./build/synthrave -f examples/minute_showcase.aox -g 0.35
+./build/synthrave -m examples/monkeyislandtitle.mid -g 0.35
 ```
 
 Optionen:
@@ -41,8 +42,14 @@ Optionen:
 - `-l <ms>` – Default-Dauer pro Token (Default 120 ms)
 - `-fade <ms>` – Fade pro Event (Default 8 ms)
 - `-f <file>` – `.srave/.aox`-Datei abspielen
+- `-m <file>` – Standard-MIDI-Datei (SMF) direkt abspielen
 - `-espeak <pfad>` – Pfad für SAY-Events (Default `espeak`)
 - `SAY@voice;text=...` – Syntax für Sprachereignisse (z. B. `SAY@en;text=Hello`).
+
+Beispiel-MIDIs:
+
+- `examples/monkeyislandtitle.mid` – Eigene Konvertierung.
+- `examples/goonies.mid` – Von https://download.file-hunter.com/Music/Midi/.
 
 ## Git/GitHub-Helfer
 
