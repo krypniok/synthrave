@@ -41,6 +41,11 @@ void synth_engine_render(const SynthEngine *engine,
                          const SynthSong *song,
                          float *buffer,
                          size_t frame_count);
+void synth_engine_render_block(const SynthEngine *engine,
+                               const SynthSong *song,
+                               float start_time,
+                               float *buffer,
+                               size_t frame_count);
 
 #ifdef __cplusplus
 }

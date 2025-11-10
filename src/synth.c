@@ -78,11 +78,12 @@ size_t synth_engine_frames_for_song(const SynthEngine *engine, const SynthSong *
     return (size_t)(length * (float)sample_rate);
 }
 
-void synth_engine_render(const SynthEngine *engine,
-                         const SynthSong *song,
-                         float *buffer,
-                         size_t frame_count) {
-    if (engine == NULL || song == NULL || buffer == NULL || frame_count == 0) {
+void synth_engine_render_block(const SynthEngine *engine,
+                               const SynthSong *song,
+                               float start_time,
+                               float *buffer,
+                               size_t frame_count) {
+    if (engine == NULL || buffer == NULL || frame_count == 0) {
         return;
     }
 
@@ -90,9 +91,12 @@ void synth_engine_render(const SynthEngine *engine,
     const unsigned int channels = engine->channels == 1 ? 1u : 2u;
 
     memset(buffer, 0, sizeof(float) * frame_count * channels);
+    if (song == NULL) {
+        return;
+    }
 
     for (size_t frame = 0; frame < frame_count; ++frame) {
-        const float t = (float)frame / (float)sample_rate;
+        const float t = start_time + ((float)frame / (float)sample_rate);
         float mix_l = 0.0f;
         float mix_r = 0.0f;
 
@@ -132,4 +136,11 @@ void synth_engine_render(const SynthEngine *engine,
             buffer[base_index + 1u] = mix_r;
         }
     }
+}
+
+void synth_engine_render(const SynthEngine *engine,
+                         const SynthSong *song,
+                         float *buffer,
+                         size_t frame_count) {
+    synth_engine_render_block(engine, song, 0.0f, buffer, frame_count);
 }

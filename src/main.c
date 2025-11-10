@@ -2,6 +2,7 @@
 
 #include <AL/al.h>
 #include <AL/alc.h>
+#include <stdbool.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +10,20 @@
 #include <time.h>
 
 #include "synthrave/instrument.h"
+#include "synthrave/ringbuffer.h"
 #include "synthrave/synth.h"
+
+#define STREAM_BUFFER_COUNT 4u
+#define STREAM_CHUNK_FRAMES 1024u
+#define RING_BUFFER_MULTIPLIER 4u
+#define RING_BUFFER_FRAMES (STREAM_BUFFER_COUNT * STREAM_CHUNK_FRAMES * RING_BUFFER_MULTIPLIER)
+
+typedef struct {
+    AudioRingBuffer ring;
+    float render_cursor;
+    float song_length;
+    int finished_render;
+} StreamContext;
 
 static const SynthInstrument INSTR_BASS = {
     .kind = SYNTH_INSTRUMENT_SINE,
@@ -141,6 +155,92 @@ static const SynthSong DEMO_SONG = {
     .length_seconds = 8.5f,
 };
 
+static void sleep_millis(unsigned int millis) {
+    const struct timespec request = {
+        .tv_sec = millis / 1000u,
+        .tv_nsec = (long)(millis % 1000u) * 1000000L,
+    };
+    nanosleep(&request, NULL);
+}
+
+static void refill_ring(StreamContext *ctx,
+                        const SynthEngine *engine,
+                        const SynthSong *song,
+                        float *scratch,
+                        size_t scratch_frames) {
+    if (ctx == NULL || engine == NULL || song == NULL || scratch == NULL || scratch_frames == 0u) {
+        return;
+    }
+    if (ctx->finished_render) {
+        return;
+    }
+
+    const float sample_rate = (float)(engine->sample_rate ? engine->sample_rate : 44100u);
+
+    while (!ctx->finished_render) {
+        size_t space = audio_ring_buffer_space(&ctx->ring);
+        if (space == 0u) {
+            break;
+        }
+        size_t frames = space < scratch_frames ? space : scratch_frames;
+        synth_engine_render_block(engine, song, ctx->render_cursor, scratch, frames);
+        const size_t written = audio_ring_buffer_write(&ctx->ring, scratch, frames);
+        if (written == 0u) {
+            break;
+        }
+        ctx->render_cursor += (float)written / sample_rate;
+        if (ctx->render_cursor >= ctx->song_length) {
+            ctx->finished_render = 1;
+        }
+        if (written < frames) {
+            break;
+        }
+    }
+}
+
+static void float_to_pcm16(const float *src, ALshort *dst, size_t sample_count) {
+    if (src == NULL || dst == NULL || sample_count == 0u) {
+        return;
+    }
+    for (size_t i = 0; i < sample_count; ++i) {
+        float value = src[i];
+        if (value > 1.0f) {
+            value = 1.0f;
+        } else if (value < -1.0f) {
+            value = -1.0f;
+        }
+        dst[i] = (ALshort)(value * 32760.0f);
+    }
+}
+
+static size_t queue_from_ring(ALuint buffer_id,
+                              StreamContext *ctx,
+                              float *mix_chunk,
+                              ALshort *pcm_chunk,
+                              size_t max_frames,
+                              const SynthEngine *engine,
+                              ALenum format) {
+    if (ctx == NULL || mix_chunk == NULL || pcm_chunk == NULL || engine == NULL || max_frames == 0u) {
+        return 0u;
+    }
+
+    const size_t frames = audio_ring_buffer_read(&ctx->ring, mix_chunk, max_frames);
+    if (frames == 0u) {
+        return 0u;
+    }
+
+    const unsigned int channels = engine->channels == 1 ? 1u : 2u;
+    const size_t samples = frames * channels;
+    float_to_pcm16(mix_chunk, pcm_chunk, samples);
+
+    alBufferData(buffer_id,
+                 format,
+                 pcm_chunk,
+                 (ALsizei)(samples * sizeof(ALshort)),
+                 (ALsizei)engine->sample_rate);
+    return frames;
+}
+
 static int check_al(const char *stage) {
     const ALenum err = alGetError();
     if (err != AL_NO_ERROR) {
@@ -150,116 +250,172 @@ static int check_al(const char *stage) {
     return 1;
 }
 
-static void wait_for_completion(ALuint source) {
-    ALint state = AL_PLAYING;
-    const struct timespec request = {
-        .tv_sec = 0,
-        .tv_nsec = 16 * 1000 * 1000,
-    };
-    while (state == AL_PLAYING) {
-        alGetSourcei(source, AL_SOURCE_STATE, &state);
-        nanosleep(&request, NULL);
-    }
-}
-
 int main(void) {
     const SynthEngine engine = {
         .sample_rate = 44100u,
         .channels = 2u,
     };
 
-    size_t frame_count = synth_engine_frames_for_song(&engine, &DEMO_SONG);
-    if (frame_count == 0) {
-        frame_count = (size_t)(engine.sample_rate * DEMO_SONG.length_seconds);
-    }
+    const unsigned int channels = engine.channels == 1 ? 1u : 2u;
+    const ALenum format = (channels == 1u) ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
 
-    const size_t sample_count = frame_count * engine.channels;
-    float *mix_buffer = calloc(sample_count, sizeof(float));
-    if (mix_buffer == NULL) {
-        fprintf(stderr, "failed to allocate mix buffer\n");
-        return EXIT_FAILURE;
-    }
+    StreamContext stream_ctx = {
+        .render_cursor = 0.0f,
+        .song_length = synth_song_estimate_length(&DEMO_SONG),
+        .finished_render = 0,
+    };
 
-    synth_engine_render(&engine, &DEMO_SONG, mix_buffer, frame_count);
-
-    ALshort *pcm_buffer = malloc(sample_count * sizeof(ALshort));
-    if (pcm_buffer == NULL) {
-        fprintf(stderr, "failed to allocate pcm buffer\n");
-        free(mix_buffer);
-        return EXIT_FAILURE;
-    }
-
-    for (size_t i = 0; i < sample_count; ++i) {
-        float value = mix_buffer[i];
-        if (value > 1.0f) {
-            value = 1.0f;
-        } else if (value < -1.0f) {
-            value = -1.0f;
-        }
-        pcm_buffer[i] = (ALshort)(value * 32760.0f);
-    }
-
-    ALCdevice *device = alcOpenDevice(NULL);
-    if (device == NULL) {
-        fprintf(stderr, "failed to open OpenAL device\n");
-        free(mix_buffer);
-        free(pcm_buffer);
-        return EXIT_FAILURE;
-    }
-
-    ALCcontext *context = alcCreateContext(device, NULL);
-    if (context == NULL || alcMakeContextCurrent(context) == ALC_FALSE) {
-        fprintf(stderr, "failed to create OpenAL context\n");
-        if (context != NULL) {
-            alcDestroyContext(context);
-        }
-        alcCloseDevice(device);
-        free(mix_buffer);
-        free(pcm_buffer);
-        return EXIT_FAILURE;
-    }
-
-    ALuint buffer_id = 0;
+    float *mix_chunk = NULL;
+    ALshort *pcm_chunk = NULL;
+    ALCdevice *device = NULL;
+    ALCcontext *context = NULL;
+    ALuint buffer_ids[STREAM_BUFFER_COUNT] = {0};
     ALuint source_id = 0;
-    alGenBuffers(1, &buffer_id);
-    if (!check_al("alGenBuffers")) {
+    int buffers_created = 0;
+    int source_created = 0;
+    int exit_code = EXIT_SUCCESS;
+
+    if (!audio_ring_buffer_init(&stream_ctx.ring, RING_BUFFER_FRAMES, channels)) {
+        fprintf(stderr, "failed to allocate audio ring buffer\n");
+        return EXIT_FAILURE;
+    }
+
+    const size_t scratch_samples = STREAM_CHUNK_FRAMES * channels;
+    mix_chunk = malloc(scratch_samples * sizeof(float));
+    pcm_chunk = malloc(scratch_samples * sizeof(ALshort));
+    if (mix_chunk == NULL || pcm_chunk == NULL) {
+        fprintf(stderr, "failed to allocate streaming buffers\n");
+        exit_code = EXIT_FAILURE;
         goto cleanup;
     }
 
-    alBufferData(buffer_id,
-                 AL_FORMAT_STEREO16,
-                 pcm_buffer,
-                 (ALsizei)(sample_count * sizeof(ALshort)),
-                 (ALsizei)engine.sample_rate);
-    if (!check_al("alBufferData")) {
+    refill_ring(&stream_ctx, &engine, &DEMO_SONG, mix_chunk, STREAM_CHUNK_FRAMES);
+
+    device = alcOpenDevice(NULL);
+    if (device == NULL) {
+        fprintf(stderr, "failed to open OpenAL device\n");
+        exit_code = EXIT_FAILURE;
+        goto cleanup;
+    }
+
+    context = alcCreateContext(device, NULL);
+    if (context == NULL || alcMakeContextCurrent(context) == ALC_FALSE) {
+        fprintf(stderr, "failed to create OpenAL context\n");
+        exit_code = EXIT_FAILURE;
+        goto cleanup;
+    }
+
+    alGenBuffers(STREAM_BUFFER_COUNT, buffer_ids);
+    if (!check_al("alGenBuffers")) {
+        exit_code = EXIT_FAILURE;
+        goto cleanup;
+    }
+    buffers_created = 1;
+
+    size_t initial_buffers = 0;
+    for (size_t i = 0; i < STREAM_BUFFER_COUNT; ++i) {
+        const size_t frames = queue_from_ring(buffer_ids[i],
+                                              &stream_ctx,
+                                              mix_chunk,
+                                              pcm_chunk,
+                                              STREAM_CHUNK_FRAMES,
+                                              &engine,
+                                              format);
+        if (frames == 0u) {
+            break;
+        }
+        ++initial_buffers;
+    }
+
+    if (initial_buffers == 0u) {
+        fprintf(stderr, "no audio data available for streaming\n");
+        exit_code = EXIT_FAILURE;
         goto cleanup;
     }
 
     alGenSources(1, &source_id);
     if (!check_al("alGenSources")) {
+        exit_code = EXIT_FAILURE;
         goto cleanup;
     }
+    source_created = 1;
 
-    alSourcei(source_id, AL_BUFFER, (ALint)buffer_id);
+    alSourceQueueBuffers(source_id, (ALsizei)initial_buffers, buffer_ids);
     alSourcef(source_id, AL_GAIN, 0.9f);
     alSourcePlay(source_id);
     if (!check_al("alSourcePlay")) {
+        exit_code = EXIT_FAILURE;
         goto cleanup;
     }
 
-    wait_for_completion(source_id);
+    bool playback_done = false;
+    while (!playback_done) {
+        refill_ring(&stream_ctx, &engine, &DEMO_SONG, mix_chunk, STREAM_CHUNK_FRAMES);
+
+        ALint processed = 0;
+        alGetSourcei(source_id, AL_BUFFERS_PROCESSED, &processed);
+        while (processed-- > 0) {
+            ALuint buffer_id = 0;
+            alSourceUnqueueBuffers(source_id, 1, &buffer_id);
+            const size_t frames = queue_from_ring(buffer_id,
+                                                  &stream_ctx,
+                                                  mix_chunk,
+                                                  pcm_chunk,
+                                                  STREAM_CHUNK_FRAMES,
+                                                  &engine,
+                                                  format);
+            if (frames > 0u) {
+                alSourceQueueBuffers(source_id, 1, &buffer_id);
+            }
+        }
+
+        ALint state = 0;
+        alGetSourcei(source_id, AL_SOURCE_STATE, &state);
+        ALint queued = 0;
+        alGetSourcei(source_id, AL_BUFFERS_QUEUED, &queued);
+
+        if (state != AL_PLAYING && queued > 0) {
+            alSourcePlay(source_id);
+        }
+
+        if (stream_ctx.finished_render &&
+            audio_ring_buffer_size(&stream_ctx.ring) == 0u &&
+            queued == 0) {
+            if (state != AL_PLAYING) {
+                playback_done = true;
+            }
+        }
+
+        sleep_millis(8);
+    }
 
 cleanup:
-    alSourceStop(source_id);
-    alDeleteSources(1, &source_id);
-    alDeleteBuffers(1, &buffer_id);
+    if (source_created) {
+        alSourceStop(source_id);
+        ALint queued = 0;
+        alGetSourcei(source_id, AL_BUFFERS_QUEUED, &queued);
+        while (queued-- > 0) {
+            ALuint buffer_id = 0;
+            alSourceUnqueueBuffers(source_id, 1, &buffer_id);
+        }
+        alDeleteSources(1, &source_id);
+    }
 
-    alcMakeContextCurrent(NULL);
-    alcDestroyContext(context);
-    alcCloseDevice(device);
+    if (buffers_created) {
+        alDeleteBuffers(STREAM_BUFFER_COUNT, buffer_ids);
+    }
 
-    free(mix_buffer);
-    free(pcm_buffer);
+    if (context != NULL) {
+        alcMakeContextCurrent(NULL);
+        alcDestroyContext(context);
+    }
+    if (device != NULL) {
+        alcCloseDevice(device);
+    }
 
-    return 0;
+    audio_ring_buffer_free(&stream_ctx.ring);
+    free(mix_chunk);
+    free(pcm_chunk);
+
+    return exit_code;
 }

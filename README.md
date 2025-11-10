@@ -4,8 +4,8 @@ Synthrave ist ein reines C-Programm, das über OpenAL einen kleinen, mehrspurige
 Software-Synthesizer bereitstellt. Jede Spur kann einem Instrument zugeordnet
 werden; Instrumente besitzen einfache ADSR-Hüllkurven und nutzen unterschiedliche
 Wellenformen (Sinus, Rechteck, Sägezahn, Dreieck). Das Beispielprogramm rendert
-mehrere Instrumente parallel, mischt sie und spielt das Ergebnis direkt über
-OpenAL ab.
+die Audiodaten blockweise, legt sie in einen Ringpuffer und streamt die Mischung
+in Echtzeit an OpenAL.
 
 ## Abhängigkeiten
 
@@ -22,16 +22,18 @@ make run        # kompiliert (falls nötig) und startet das Demo
 make clean      # löscht den build-Ordner
 ```
 
-Nach dem Start rendert Synthrave alle Spuren in einen Puffer, lädt ihn in einen
-OpenAL-Buffer und spielt die Sequenz komplett ab. Die Dauer des Demos beträgt
-ca. 8 Sekunden.
+Beim Start legt Synthrave mehrere Streaming-Puffer an, die fortlaufend über den
+internen Ringpuffer aufgefüllt werden. So laufen Rendering und OpenAL-Wiedergabe
+parallel; die Sequenz dauert ca. 8 Sekunden.
 
 ## Git/GitHub-Helfer
 
 Das Makefile bringt zwei Komfort-Targets mit:
 
-- `make push` pusht den aktuellen Branch auf das konfigurierte Remote
-  (Standard: `origin`). Auf Wunsch `make push REMOTE=upstream`.
+- `make push` staged alle Änderungen, erstellt automatisch einen Commit
+  (`COMMIT_MSG="..."` anpassbar) und führt anschließend einen `git push --force`
+  auf das gewählte Remote/Branch aus (Standard: `origin`). Vorsicht: Damit wird
+  die Historie auf dem Remote überschrieben.
 - `make repo REPO_NAME=<owner/name>` erstellt per `gh repo create` ein neues
   GitHub-Repo, setzt das Remote (Default `origin`) und macht direkt den ersten
   Push. Die Sichtbarkeit lässt sich via `VISIBILITY=public|private|internal`
@@ -40,12 +42,11 @@ Das Makefile bringt zwei Komfort-Targets mit:
 ## Projektstruktur
 
 - `include/` – Öffentliche Header (`synthrave/…`).
-- `src/` – Implementierung von Instrumenten, Synth-Engine und `main.c`.
+- `src/` – Implementierung von Instrumenten, Synth-Engine, Ringpuffer und `main.c`.
 - `Makefile` – klassischer Build plus Git/GitHub-Helfer.
 
 ## Erweiterungsideen
 
 - Weitere Instrumenttypen oder Filter hinzufügen.
 - Ereignisse zur Laufzeit generieren (z. B. über MIDI-In oder Netzwerk).
-- Ringpuffer verwenden und den Mixer in Echtzeit füttern, anstatt komplette
-  Blöcke vorab zu rendern.
+- Effekte wie Delay/Reverb hinzufügen oder externe Controller einbinden.

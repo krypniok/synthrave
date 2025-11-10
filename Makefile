@@ -16,6 +16,7 @@ OBJ := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 REMOTE ?= origin
 REPO_NAME ?= synthrave
 VISIBILITY ?= public
+COMMIT_MSG ?= chore: auto push
 
 .PHONY: all run clean push repo
 
@@ -41,8 +42,12 @@ push:
 	if [ -z "$$branch" ]; then \
 		echo "Could not determine current branch" >&2; exit 1; \
 	fi; \
-	echo "Pushing $$branch to $(REMOTE)…"; \
-	git push $(REMOTE) $$branch
+	echo "Staging all changes…"; \
+	git add -A; \
+	echo "Creating sync commit…"; \
+	git commit --allow-empty -m "$(COMMIT_MSG)"; \
+	echo "Force-pushing $$branch to $(REMOTE)…"; \
+	git push --force $(REMOTE) $$branch
 
 repo:
 	@if [ -z "$(REPO_NAME)" ]; then \
