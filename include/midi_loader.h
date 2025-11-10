@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#include "synthrave/sequence.h"
+#include "sequence.h"
 
 #ifdef __cplusplus
 extern "C" {

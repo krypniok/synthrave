@@ -1,4 +1,4 @@
-#include "synthrave/instruments_ext.h"
+#include "instruments_ext.h"
 
 #include <math.h>
 #include <stddef.h>

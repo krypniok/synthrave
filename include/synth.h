@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#include "synthrave/instrument.h"
+#include "instrument.h"
 
 #ifdef __cplusplus
 extern "C" {

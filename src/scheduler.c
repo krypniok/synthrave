@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "synthrave/scheduler.h"
+#include "scheduler.h"
 
-#include "synthrave/instruments_ext.h"
+#include "instruments_ext.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>

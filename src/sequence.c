@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include "synthrave/sequence.h"
+#include "sequence.h"
 
 #include <ctype.h>
 #include <errno.h>

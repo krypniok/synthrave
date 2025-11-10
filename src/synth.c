@@ -1,4 +1,4 @@
-#include "synthrave/synth.h"
+#include "synth.h"
 
 #include <math.h>
 #include <stddef.h>

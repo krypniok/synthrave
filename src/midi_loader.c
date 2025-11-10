@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "synthrave/midi_loader.h"
+#include "midi_loader.h"
 
 #include <math.h>
 #include <stdint.h>

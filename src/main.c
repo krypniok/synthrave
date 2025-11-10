@@ -9,9 +9,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "synthrave/sequence.h"
-#include "synthrave/midi_loader.h"
-#include "synthrave/scheduler.h"
+#include "sequence.h"
+#include "midi_loader.h"
+#include "scheduler.h"
 
 static bool parse_float(const char *s, float *out) {
     if (!s) {

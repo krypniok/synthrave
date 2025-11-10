@@ -1,4 +1,4 @@
-#include "synthrave/ringbuffer.h"
+#include "ringbuffer.h"
 
 #include <stddef.h>
 #include <stdlib.h>

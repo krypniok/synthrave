@@ -1,4 +1,4 @@
-#include "synthrave/instrument.h"
+#include "instrument.h"
 
 #include <math.h>
 

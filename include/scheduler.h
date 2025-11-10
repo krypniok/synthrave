@@ -1,7 +1,7 @@
 #ifndef SYNTHRAVE_SCHEDULER_H
 #define SYNTHRAVE_SCHEDULER_H
 
-#include "synthrave/sequence.h"
+#include "sequence.h"
 
 #ifdef __cplusplus
 extern "C" {

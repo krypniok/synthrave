@@ -10,7 +10,7 @@ BUILD_DIR ?= build
 TARGET ?= synthrave
 BINARY := $(BUILD_DIR)/$(TARGET)
 
-SRC := $(wildcard src/*.c)
+SRC := $(filter-out src/mid2sr.c,$(wildcard src/*.c))
 OBJ := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 
 REMOTE ?= origin
@@ -56,5 +56,5 @@ repo:
 	fi
 	gh repo create $(REPO_NAME) --source=. --remote=$(REMOTE) --push --$(VISIBILITY)
 
-mid2sr:
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o tools/mid2sr tools/mid2sr.c -lm
+mid2sr: | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $(BUILD_DIR)/mid2sr src/mid2sr.c -lm
