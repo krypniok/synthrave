@@ -271,6 +271,7 @@ void kick_process(KickState *state,
     }
     const float sample_rate = cfg->sample_rate;
     const float sweep_rate = frames > 0 ? 1.0f / fmaxf(duration_s * sample_rate, 1.0f) : 0.0f;
+    const float attack_samples = fmaxf(sample_rate * 0.0025f, 1.0f); /* ~2.5 ms ramp to remove clicks */
     for (size_t i = 0; i < frames; ++i) {
         state->sweep_pos = fminf(1.0f, state->sweep_pos + sweep_rate);
         const float freq = lerp(start_freq, end_freq, state->sweep_pos);
@@ -281,7 +282,9 @@ void kick_process(KickState *state,
         const float body = sinf(state->phase) * expf(-4.0f * state->sweep_pos);
         state->click_env = fmaxf(0.0f, 1.0f - state->sweep_pos * 8.0f);
         const float click = state->click_env * (frand() * 0.4f + 0.6f);
-        out[i] = body + click * 0.2f;
+        float sample = body + click * 0.08f;
+        const float attack = fminf(((float)i) / attack_samples, 1.0f);
+        out[i] = sample * attack;
     }
 }
 
