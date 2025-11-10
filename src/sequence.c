@@ -197,6 +197,49 @@ static char *collect_field(const char *start, size_t len) {
     return buf;
 }
 
+static bool string_is_numeric(const char *s) {
+    if (!s || *s == '\0') {
+        return false;
+    }
+    const char *p = s;
+    if (*p == '+' || *p == '-') {
+        p++;
+    }
+    bool has_digit = false;
+    bool has_dot = false;
+    while (*p) {
+        if (*p >= '0' && *p <= '9') {
+            has_digit = true;
+            p++;
+            continue;
+        }
+        if (*p == '.' && !has_dot) {
+            has_dot = true;
+            p++;
+            continue;
+        }
+        return false;
+    }
+    return has_digit;
+}
+
+static void normalize_inline_row(CsvRow *row) {
+    if (!row) {
+        return;
+    }
+    if (row->cols[1] && *row->cols[1] && !string_is_numeric(row->cols[1])) {
+        if (!row->cols[3] || *row->cols[3] == '\0') {
+            row->cols[3] = row->cols[1];
+            row->cols[1] = NULL;
+        }
+    }
+    if ((!row->cols[3] || *row->cols[3] == '\0') &&
+        row->cols[2] && *row->cols[2] && !string_is_numeric(row->cols[2])) {
+        row->cols[3] = row->cols[2];
+        row->cols[2] = NULL;
+    }
+}
+
 static CsvRow csv_row_clone(const CsvRow *src) {
     CsvRow r = {{0}};
     for (int i = 0; i < 5; ++i) {
@@ -1451,23 +1494,19 @@ static bool build_sequence_events(const CsvRowVec *rows,
             continue;
         }
         int effective_ms = (dur_ms > 0) ? dur_ms : opts->default_duration_ms;
-        size_t need = strlen(tok) + 32;
-        char *token_with_dur = xmalloc(need);
-        snprintf(token_with_dur, need, "%s:%d", tok, effective_ms);
         Token parsed;
-        if (!parse_token(token_with_dur, opts->default_duration_ms, &parsed)) {
+        if (!parse_token(tok, effective_ms, &parsed)) {
             fprintf(stderr, "synthrave: token parse error: %s\n", tok);
-            free(token_with_dur);
             free(mode_clean);
             return false;
         }
-        free(token_with_dur);
+        int tone_ms = parsed.duration_ms > 0 ? parsed.duration_ms : effective_ms;
         apply_mode_to_token(&parsed, mode_clean);
         int tone_samples = token_target_samples(&parsed, sr);
         bool advance = (!is_bg || adv);
         if (parsed.left.type == SEQ_SPEC_SILENCE && parsed.right.type == SEQ_SPEC_SILENCE) {
             if (advance) {
-                int rest_samples = ms_to_samples_allow_zero(effective_ms, sr);
+                int rest_samples = ms_to_samples_allow_zero(tone_ms, sr);
                 timeline_samples += (size_t)rest_samples;
                 timeline_samples += (size_t)gap_samples;
             }
@@ -1478,7 +1517,7 @@ static bool build_sequence_events(const CsvRowVec *rows,
         ev.left = spec_clone(&parsed.left);
         ev.right = spec_clone(&parsed.right);
         ev.stereo = parsed.stereo;
-        ev.duration_ms = effective_ms;
+        ev.duration_ms = tone_ms;
         ev.gap_ms = gap_ms;
         ev.explicit_duration = parsed.explicit_dur;
         ev.sample_override = parsed.sample_override;
@@ -1591,75 +1630,45 @@ bool sequence_build_from_tokens(const char *const *tokens,
         return false;
     }
     memset(doc, 0, sizeof(*doc));
+    CsvRowVec rows = {0};
     ToneVec tones = {0};
     SpeechVec speech = {0};
-    size_t timeline_samples = 0;
-    int sr = opts->sample_rate;
+    size_t total_samples = 0;
     bool ok = false;
     for (int i = 0; i < token_count; ++i) {
         const char *raw = tokens[i];
         if (!raw || !*raw) {
             continue;
         }
-        int dur_ms = opts->default_duration_ms;
-        const char *colon = strrchr(raw, ':');
-        if (colon) {
-            const char *d = colon + 1;
-            char *dur_str = collect_field(d, strlen(d));
-            if (!parse_int_strict(dur_str, &dur_ms) || dur_ms <= 0) {
-                dur_ms = opts->default_duration_ms;
-            }
-            free(dur_str);
-        }
-        if (parse_say_event(raw, timeline_samples, sr, &speech)) {
-            timeline_samples += (size_t)ms_to_samples_allow_zero(dur_ms, sr);
-            continue;
-        }
-        bool has_duration = false;
-        for (const char *check = raw; *check; ++check) {
-            if (*check == ':') {
-                has_duration = true;
-                break;
-            }
-        }
-        char *token_with_dur = NULL;
-        if (has_duration) {
-            token_with_dur = xstrdup(raw);
-        } else {
-            size_t need = strlen(raw) + 32;
-            token_with_dur = xmalloc(need);
-            snprintf(token_with_dur, need, "%s:%d", raw, dur_ms);
-        }
-        Token parsed;
-        if (!parse_token(token_with_dur, opts->default_duration_ms, &parsed)) {
+        CsvRow row;
+        if (!parse_csv_line(raw, &row)) {
             fprintf(stderr, "synthrave: token parse error: %s\n", raw);
-            free(token_with_dur);
             goto cleanup;
         }
-        free(token_with_dur);
-        int tone_samples = token_target_samples(&parsed, sr);
-        SeqToneEvent ev = {0};
-        ev.left = spec_clone(&parsed.left);
-        ev.right = spec_clone(&parsed.right);
-        ev.stereo = parsed.stereo;
-        ev.duration_ms = dur_ms;
-        ev.explicit_duration = parsed.explicit_dur;
-        ev.sample_override = parsed.sample_override;
-        ev.start_sample = timeline_samples;
-        ev.sample_count = (size_t)tone_samples;
-        tone_vec_push(&tones, &ev);
-        timeline_samples += (size_t)tone_samples;
+        if (!row.cols[0] || row.cols[0][0] == '\0') {
+            csv_row_free(&row);
+            continue;
+        }
+        normalize_inline_row(&row);
+        csv_rowvec_push(&rows, row);
+    }
+    if (rows.len == 0) {
+        goto cleanup;
+    }
+    if (!build_sequence_events(&rows, opts, &tones, &speech, &total_samples)) {
+        goto cleanup;
     }
     doc->tones = tones.items;
     doc->tone_count = tones.len;
     doc->speech = speech.items;
     doc->speech_count = speech.len;
-    doc->total_samples = timeline_samples;
+    doc->total_samples = total_samples;
     tones.items = NULL;
     speech.items = NULL;
     ok = true;
 
 cleanup:
+    csv_rowvec_free(&rows);
     if (!ok) {
         for (size_t i = 0; i < tones.len; ++i) {
             seqspec_free(&tones.items[i].left);

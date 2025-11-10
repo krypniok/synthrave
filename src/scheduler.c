@@ -421,6 +421,26 @@ static void apply_fade(float *buf, size_t frames, int sr, int fade_ms) {
     }
 }
 
+static size_t ensure_minimum_tail(float **left,
+                                  float **right,
+                                  size_t current,
+                                  int sample_rate) {
+    const float min_ms = 250.f; /* keep device awake for short bursts */
+    size_t min_samples = (size_t)((min_ms / 1000.f) * (float)sample_rate);
+    if (min_samples < MIX_BLOCK) {
+        min_samples = MIX_BLOCK;
+    }
+    if (current >= min_samples) {
+        return current;
+    }
+    size_t padded = min_samples;
+    *left = xrealloc(*left, padded * sizeof(float));
+    *right = xrealloc(*right, padded * sizeof(float));
+    memset(*left + current, 0, (padded - current) * sizeof(float));
+    memset(*right + current, 0, (padded - current) * sizeof(float));
+    return padded;
+}
+
 static size_t mix_offline(const VoiceVec *voices,
                         const SequenceDocument *doc,
                         const SequenceOptions *opts,
@@ -633,6 +653,8 @@ int scheduler_play_document(const SequenceDocument *doc,
     size_t total_samples = doc->total_samples;
     if (voices.len > 0) {
         total_samples = mix_offline(&voices, doc, opts, &left, &right);
+        total_samples = ensure_minimum_tail(&left, &right, total_samples,
+                                            opts->sample_rate);
     } else {
         size_t total = total_samples;
         if (total == 0) {
@@ -649,7 +671,8 @@ int scheduler_play_document(const SequenceDocument *doc,
         }
         left = xcalloc(total, sizeof(float));
         right = xcalloc(total, sizeof(float));
-        total_samples = total;
+        total_samples = ensure_minimum_tail(&left, &right, total,
+                                            opts->sample_rate);
     }
     free(voices.items);
 
